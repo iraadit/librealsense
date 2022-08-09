@@ -118,6 +118,26 @@ private:
 };
 
 template<class T>
+class pb_align_test : public test
+{
+public:
+    pb_align_test(std::string name) 
+        : _block(rs2_stream::RS2_STREAM_DEPTH), _name(std::move(name)) {}
+
+    frame process(frame f) override
+    {
+        return _block.rs2::filter::process(f);
+    }
+    virtual const std::string& name() const override
+    {
+        return _name;
+    }
+private:
+    T _block;
+    std::string _name;
+};
+
+template<class T>
 class gl_test : public pb_test<T>
 {
 public:
@@ -153,6 +173,42 @@ private:
     volatile void* _ptr;
 };
 
+template<class T>
+class gl_align_test : public pb_align_test<T>
+{
+public:
+    gl_align_test(std::string name) 
+        : pb_align_test<T>(std::move(name)) {}
+
+
+    void flush()
+    {
+        glFlush();
+        glFinish();
+    }
+
+    frame process(frame f) override
+    {
+        auto res = pb_align_test<T>::process(f);
+        flush();
+        return res;
+    }
+    frame prepare(frame f) override
+    {
+        auto res = _upload.process(f);
+        flush();
+        return res;
+    }
+    frame finish(frame f) override
+    {
+        _ptr = (void*)f.get_data();
+        return f;
+    }
+private:
+    gl::uploader _upload;
+    volatile void* _ptr;
+};
+
 class suite
 {
 public:
@@ -161,6 +217,8 @@ public:
 };
 
 #define REGISTER_TEST(x) tests.push_back(make_shared<pb_test<x>>(#x))
+
+#define REGISTER_ALIGN_TEST(x) tests.push_back(make_shared<pb_align_test<x>>(#x))
 
 class processing_blocks : public suite
 {
@@ -177,15 +235,19 @@ public:
             REGISTER_TEST(disparity_transform);
             REGISTER_TEST(threshold_filter);
             REGISTER_TEST(decimation_filter);
+            REGISTER_ALIGN_TEST(rs2::align);
         }
         if (stream.format() == RS2_FORMAT_YUYV)
         {
             REGISTER_TEST(yuy_decoder);
+            REGISTER_TEST(y411_decoder);
         }
     }
 };
 
 #define REGISTER_GL_TEST(x) tests.push_back(make_shared<gl_test<x>>(#x))
+
+#define REGISTER_GL_ALIGN_TEST(x) tests.push_back(make_shared<gl_align_test<x>>(#x))
 
 class gl_blocks : public suite
 {
@@ -197,10 +259,12 @@ public:
         {
             REGISTER_GL_TEST(gl::colorizer);
             REGISTER_GL_TEST(gl::pointcloud);
+            REGISTER_GL_ALIGN_TEST(gl::align);
         }
         if (stream.format() == RS2_FORMAT_YUYV)
         {
             REGISTER_GL_TEST(gl::yuy_decoder);
+            REGISTER_GL_TEST(gl::y411_decoder);
         }
     }
 };
@@ -254,7 +318,8 @@ int main(int argc, char** argv) try
     config cfg;
     if (!serial.empty())
         cfg.enable_device(serial);
-    cfg.enable_stream(RS2_STREAM_DEPTH);
+    // cfg.enable_stream(RS2_STREAM_DEPTH);
+    cfg.enable_stream(RS2_STREAM_DEPTH, -1, 1280, 720, RS2_FORMAT_ANY, 30);
     if(second_stream == RS2_STREAM_COLOR)
         cfg.enable_stream(RS2_STREAM_COLOR, RS2_FORMAT_YUYV, 30);
     else
@@ -291,8 +356,8 @@ int main(int argc, char** argv) try
         }
 
         cout << endl;
-        cout << "|Filter Name |Step |Median(m)   |Mean(m)  |STD(m)  |Max(m)  | Max FPS |" << endl;
-        cout << "|------------|-----|------------|---------|--------|--------|---------|" << endl;
+        cout << "|Filter Name |Step |Median(m)   |Mean(m)  |STD(m)  |Max(m)  | Max FPS | Extreme Max FPS " << endl;
+        cout << "|------------|-----|------------|---------|--------|--------|---------|-----------------|" << endl;
 
         string last_name = "";
         for (auto&& test : procs)
@@ -339,27 +404,45 @@ int main(int argc, char** argv) try
                 auto expected_max = mean + 1.645 * stdev; // 95-percentile - camera spec allows up to 5% outliers
 
                 int best_fps = 1;
+                int extreme_best_fps = 1;
                 for (int fps : fps_values)
                 {
                     auto max_allowed = 1000.0 / fps;
                     if (expected_max < max_allowed) best_fps = fps;
+                    if (max < max_allowed) extreme_best_fps = fps;
                 }
 
                 if (sm.first == "Calculate" || median > 0.001)
                 {
                     bool is_new = last_name != test->name();
                     bool is_total = sm.first == "Total";
-                    cout << "|" << (is_new ? test->name() : "") 
+                    cout << "|" << (is_new ? test->name() : "           ")
                         << " |" << (is_total ? "**" : "") << sm.first << (is_total ? "**" : "") << " |"
                         << fixed << median << " |" << mean << " |"
                         << stdev << " |" << max << " |";
 
-                    if (best_fps == 90) cout << "90 ![90](https://placehold.it/15/35ff4d/000000?text=+)";
-                    else if (best_fps == 60) cout << "60 ![60](https://placehold.it/15/6fe837/000000?text=+)";
-                    else if (best_fps == 30) cout << "30 ![30](https://placehold.it/15/82c13e/000000?text=+)";
-                    else if (best_fps == 15) cout << "15 ![15](https://placehold.it/15/eff70c/000000?text=+)";
-                    else if (best_fps == 6) cout << "6 ![6](https://placehold.it/15/d6a726/000000?text=+)";
-                    else cout << "? ![unknown](https://placehold.it/15/d65d26/000000?text=+)";
+                    // if (best_fps == 90) cout << "90 ![90](https://placehold.it/15/35ff4d/000000?text=+)";
+                    // else if (best_fps == 60) cout << "60 ![60](https://placehold.it/15/6fe837/000000?text=+)";
+                    // else if (best_fps == 30) cout << "30 ![30](https://placehold.it/15/82c13e/000000?text=+)";
+                    // else if (best_fps == 15) cout << "15 ![15](https://placehold.it/15/eff70c/000000?text=+)";
+                    // else if (best_fps == 6) cout << "6 ![6](https://placehold.it/15/d6a726/000000?text=+)";
+                    // else cout << "? ![unknown](https://placehold.it/15/d65d26/000000?text=+)";
+
+                    if (best_fps == 90) cout << "90";
+                    else if (best_fps == 60) cout << "60";
+                    else if (best_fps == 30) cout << "30";
+                    else if (best_fps == 15) cout << "15";
+                    else if (best_fps == 6) cout << "6";
+                    else cout << "?";
+
+                    cout << " |";
+
+                    if (extreme_best_fps == 90) cout << "90";
+                    else if (extreme_best_fps == 60) cout << "60";
+                    else if (extreme_best_fps == 30) cout << "30";
+                    else if (extreme_best_fps == 15) cout << "15";
+                    else if (extreme_best_fps == 6) cout << "6";
+                    else cout << "?";
 
                     cout << " |" << endl;
 
