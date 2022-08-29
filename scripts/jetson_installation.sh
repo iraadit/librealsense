@@ -45,7 +45,7 @@ echo Install udev-rules
 sudo cp config/99-realsense-libusb.rules /etc/udev/rules.d/ 
 sudo udevadm control --reload-rules && sudo udevadm trigger 
 mkdir build && cd build
-cmake ../ -DFORCE_RSUSB_BACKEND=true -DCMAKE_BUILD_TYPE=release -DBUILD_WITH_CUDA=true -DBUILD_WITH_OPENMP=TRUE -DBUILD_EXAMPLES=true -DBUILD_GRAPHICAL_EXAMPLES=true -DBUILD_CV_EXAMPLES=true -DBUILD_PYTHON_BINDINGS=true -DPYTHON_EXECUTABLE=/usr/bin/python3
+cmake ../ -DFORCE_RSUSB_BACKEND=true -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_WITH_CUDA=true -DBUILD_WITH_OPENMP=TRUE -DBUILD_EXAMPLES=true -DBUILD_GRAPHICAL_EXAMPLES=true -DBUILD_CV_EXAMPLES=true -DBUILD_PYTHON_BINDINGS=true -DPYTHON_EXECUTABLE=/usr/bin/python3 -DBUILD_SHARED_LIBS=true -DBUILD_EASYLOGGINGPP=true -DENABLE_EASYLOGGINGPP_ASYNC=true
 make -j8
 sudo make install
 echo -e "\e[92m\n\e[1mLibrealsense script completed.\n\e[0m"
